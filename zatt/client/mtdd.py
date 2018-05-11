@@ -15,6 +15,6 @@ class MTDD(collections.UserDict, AbstractClient):
         if force or self.refresh_policy.can_update():
             self.data = self._get_state()
 
-    def send_minitransaction(self, compare_set, write_set, read_set):
+    def send_mt(self, compare_set, write_set, read_set):
         return super()._request({'type': 'enqueue', 'compare_set': compare_set,
             'write_set': write_set, 'read_set': read_set})

@@ -342,12 +342,15 @@ class Leader(State):
         for key in compare_set: # first acquire read locks
             if key not in self.locks:
                 self.locks[key] = RWLock()
-            self.locks[key].acquire_write()
+            if len(msg['write_set']) > 0: # only grab write locks if there are writes within the minitxn
+                self.locks[key].acquire_write()
+            else:
+                self.locks[key].acquire_read()
 
         state_machine = self.log.state_machine
         success = 1
-        for key, expected_value in compare_set: # check values
-            if state_machine[key] != expected_value:
+        for key in compare_set: # check values
+            if state_machine[key] != compare_set[key]:
                 success = 0
                 break
         for key in compare_set: # release read locks
