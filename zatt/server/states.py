@@ -415,7 +415,7 @@ class Leader(State):
             if client_index <= self.log.commitIndex:
                 for client in clients:
                     print("client_index " + str(client_index))
-                    client.send({'type': 'result', 'success': True, 'reads': self.read_cache.get(client_index, {})})  # TODO
+                    client.send({'type': 'result', 'success': True, 'reads': self.read_cache.get(client_index-1, {})})  # TODO
                     logger.debug('Sent successful response to client')
                     self.stats.increment('write')
                 to_delete.append(client_index)
