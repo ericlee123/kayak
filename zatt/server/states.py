@@ -337,51 +337,54 @@ class Leader(State):
             self.nextIndex[peer] = max(0, self.nextIndex[peer] - 1)
 
     def on_client_enqueue(self, protocol, msg):
-        # check compare set first
+
         compare_set = msg['compare_set']
-        for key in compare_set: # first acquire read locks
+        write_set = msg['write_set']
+        read_set = msg['read_set'] # actually a list
+
+        # grab locks:
+        #   read  -> (C + R) / W
+        #   write -> W
+        read_locks = set(compare_set.keys()).union(read_set).difference(write_set.keys())
+        write_locks = write_set.keys()
+        for key in read_locks:
             if key not in self.locks:
                 self.locks[key] = RWLock()
-            if len(msg['write_set']) > 0: # only grab write locks if there are writes within the minitxn
-                self.locks[key].acquire_write()
-            else:
-                self.locks[key].acquire_read()
-
-        state_machine = self.log.state_machine
-        success = 1
-        for key in compare_set: # check values
-            if state_machine[key] != compare_set[key]:
-                success = 0
-                break
-        for key in compare_set: # release read locks
-            self.locks[key].release()
-
-        # if compare set failed, notify user immediately
-        if not success:
-            protocol.send({'type': 'result', 'success': False, 'reads': {}})
-            return
-
-        # TODO: cache read to be returned on commit
-        reads = {}
-        for key in msg['read_set']:
-            reads[key] = self.log.state_machine[key]
-
-        # TODO: return immediately if no write set
-        if len(msg['write_set']) == 0:
-            protocol.send({'type': 'result', 'success': True, 'reads': reads})
-            return
-
-        print("caching read at " + str(self.log.index))
-        print("cache is ")
-        print(reads)
-        print("blah")
-        self.read_cache[self.log.index] = reads
-
-        # acquire write locks on write set
-        for key in msg['write_set'].keys():
+            self.locks[key].acquire_read()
+        for key in write_locks:
             if key not in self.locks:
                 self.locks[key] = RWLock()
             self.locks[key].acquire_write()
+
+        # check compare set before proceeding with transaction
+        success = 1
+        for key in compare_set: # check values
+            if self.log.state_machine[key] != compare_set[key]:
+                success = 0
+                break
+
+        # if compare set failed, notify user immediately
+        if not success:
+            for key in zip(read_locks, write_locks):
+                self.locks[key].release()
+            protocol.send({'type': 'result', 'success': False, 'reads': {}})
+            return
+
+        # cache read to be returned on commit
+        reads = {}
+        for key in read_set:
+            reads[key] = self.log.state_machine[key]
+
+        # release read locks
+        for key in read_locks:
+            self.locks[key].release()
+
+        #  return immediately if no write set
+        if len(write_set) == 0:
+            protocol.send({'type': 'result', 'success': True, 'reads': reads})
+            return
+
+        self.read_cache[self.log.index] = reads
 
         # write to self and then wait for send_append_entries() to come around
         writes = {'action': 'put', 'write_set': msg['write_set'], 'key': 'wat'}
@@ -414,7 +417,6 @@ class Leader(State):
         for client_index, clients in self.waiting_clients.items():
             if client_index <= self.log.commitIndex:
                 for client in clients:
-                    print("client_index " + str(client_index))
                     client.send({'type': 'result', 'success': True, 'reads': self.read_cache.get(client_index-1, {})})  # TODO
                     logger.debug('Sent successful response to client')
                     self.stats.increment('write')
