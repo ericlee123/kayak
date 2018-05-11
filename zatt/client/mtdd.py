@@ -18,3 +18,12 @@ class MTDD(collections.UserDict, AbstractClient):
     def send_mt(self, compare_set, write_set, read_set):
         return super()._request({'type': 'enqueue', 'compare_set': compare_set,
             'write_set': write_set, 'read_set': read_set})
+
+    # TODO allow this to use dict notation i.e. mtdd['etc'] = '...'
+    def get(self, key):
+        return super()._request({'type': 'enqueue', 'compare_set': {},
+            'write_set': {}, 'read_set': [key])
+
+    def put(self, key, value):
+        return super()._request({'type': 'enqueue', 'compare_set': {},
+            'write_set': {key: value}, 'read_set': [])
