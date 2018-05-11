@@ -256,6 +256,7 @@ class Leader(State):
         self.waiting_clients = {}
         self.send_append_entries()
         self.locks = {}
+        self.read_cache = {}
 
         if 'cluster' not in self.log.state_machine:
             self.log.append_entries([
@@ -329,7 +330,7 @@ class Leader(State):
             if self.log[index]['data']['key'] != 'cluster': # filter some other messages
                 if progress:
                     for key in self.log[index]['data']['write_set']:
-                        self.locks[key].writer_release()
+                        self.locks[key].release()
 
             self.send_client_append_response()
         else:
@@ -341,7 +342,7 @@ class Leader(State):
         for key in compare_set: # first acquire read locks
             if key not in self.locks:
                 self.locks[key] = RWLock()
-            self.locks[key].reader_acquire()
+            self.locks[key].acquire_write()
 
         state_machine = self.log.state_machine
         success = 1
@@ -350,21 +351,34 @@ class Leader(State):
                 success = 0
                 break
         for key in compare_set: # release read locks
-            self.locks[key].reader_release()
+            self.locks[key].release()
 
         # if compare set failed, notify user immediately
         if not success:
-            protocol.send({'type': 'result', 'success': False})
+            protocol.send({'type': 'result', 'success': False, 'reads': {}})
             return
 
         # TODO: cache read to be returned on commit
+        reads = {}
+        for key in msg['read_set']:
+            reads[key] = self.log.state_machine[key]
+
         # TODO: return immediately if no write set
+        if len(msg['write_set']) == 0:
+            protocol.send({'type': 'result', 'success': True, 'reads': reads})
+            return
+
+        print("caching read at " + str(self.log.index))
+        print("cache is ")
+        print(reads)
+        print("blah")
+        self.read_cache[self.log.index] = reads
 
         # acquire write locks on write set
         for key in msg['write_set'].keys():
             if key not in self.locks:
                 self.locks[key] = RWLock()
-            self.locks[key].writer_acquire()
+            self.locks[key].acquire_write()
 
         # write to self and then wait for send_append_entries() to come around
         writes = {'action': 'put', 'write_set': msg['write_set'], 'key': 'wat'}
@@ -397,7 +411,8 @@ class Leader(State):
         for client_index, clients in self.waiting_clients.items():
             if client_index <= self.log.commitIndex:
                 for client in clients:
-                    client.send({'type': 'result', 'success': True})  # TODO
+                    print("client_index " + str(client_index))
+                    client.send({'type': 'result', 'success': True, 'reads': self.read_cache.get(client_index, {})})  # TODO
                     logger.debug('Sent successful response to client')
                     self.stats.increment('write')
                 to_delete.append(client_index)

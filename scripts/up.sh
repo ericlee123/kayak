@@ -1,4 +1,4 @@
-./down.sh
+~/dev/kayak/scripts/down.sh
 
 python3 setup.py install >/dev/null 2>&1
 
