@@ -1,0 +1,27 @@
+>>> Raft's invariants (election safety, leader append-only, log matching, leader completeness, state machine safety)
+
+\A i \in Server : \A j \in Server \ {i} :
+	IF currentTerm[i] = currentTerm[j]
+	THEN Cardinality({ s \in {state[i], state[j]} : s = Leader }) <= 1
+	ELSE TRUE
+
+IF nextLogLength > 0 THEN nextLogLength > prevLogLength ELSE TRUE
+
+\A i \in Server : \A j \in Server \ {i} :
+	IF Len(log[i]) < Len(log[j])
+	THEN \A k \in (1..Len(log[i])) : IF log[i][k].term = log[j][k].term THEN log[i][k].kv.key = log[j][k].kv.key /\ log[i][k].kv.value = log[j][k].kv.value ELSE TRUE
+	ELSE \A k \in (1..Len(log[j])) : IF log[i][k].term = log[j][k].term THEN log[i][k].kv.key = log[j][k].kv.key /\ log[i][k].kv.value = log[j][k].kv.value ELSE TRUE
+
+\A i \in Server : \A j \in Server \ {i} :
+	IF commitIndex[i] < commitIndex[j]
+	THEN \A k \in (1..commitIndex[i]) : log[i][k].term = log[j][k].term /\ log[i][k].kv.key = log[j][k].kv.key /\ log[i][k].kv.value = log[j][k].kv.value
+	ELSE \A k \in (1..commitIndex[j]) : log[i][k].term = log[j][k].term /\ log[i][k].kv.key = log[j][k].kv.key /\ log[i][k].kv.value = log[j][k].kv.value
+
+\A t \in DOMAIN termLeaderLog :
+	\A i \in (t .. Cardinality(DOMAIN termLeaderLog)) :
+		\A j \in (1 .. Len(termLeaderLog[t])) :
+			termLeaderLog[t][j].term = termLeaderLog[i][j].term /\
+			termLeaderLog[t][j].kv.key = termLeaderLog[i][j].kv.key /\
+			termLeaderLog[t][j].kv.value = termLeaderLog[i][j].kv.value
+
+>>> Kayak specific
