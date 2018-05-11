@@ -7,6 +7,8 @@ from .utils import PersistentDict, TallyCounter
 from .log import LogManager
 from .config import config
 
+from .rwlock import RWLock
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +34,11 @@ class State:
             self._update_cluster()
         self.stats = TallyCounter(['read', 'write', 'append'])
 
+        # maps key names to locks
+        # self.variableLocksMap = {}
+        # TODO map commit index to variables touched by that commit (might not
+        # necessary for this impl)
+
     def data_received_peer(self, peer, msg):
         """Receive peer messages from orchestrator and pass them to the
         appropriate method."""
@@ -49,6 +56,7 @@ class State:
             method(peer, msg)
         else:
             logger.info('Unrecognized message from %s: %s', peer, msg)
+            pass
 
     def data_received_client(self, protocol, msg):
         """Receive client messages from orchestrator and pass them to the
@@ -59,6 +67,14 @@ class State:
         else:
             logger.info('Unrecognized message from %s: %s',
                         protocol.transport.get_extra_info('peername'), msg)
+
+    def on_client_enqueue(self, protocol, msg):
+        """Redirect client to leader upon receiving a client_append message."""
+        msg = {'type': 'redirect',
+               'leader': self.volatile['leaderId']}
+        protocol.send(msg)
+        logger.debug('Redirect client %s:%s to leader',
+                     *protocol.transport.get_extra_info('peername'))
 
     def on_client_append(self, protocol, msg):
         """Redirect client to leader upon receiving a client_append message."""
@@ -239,6 +255,7 @@ class Leader(State):
         self.nextIndex = {p: self.log.commitIndex + 1 for p in self.matchIndex}
         self.waiting_clients = {}
         self.send_append_entries()
+        self.locks = {}
 
         if 'cluster' not in self.log.state_machine:
             self.log.append_entries([
@@ -301,10 +318,64 @@ class Leader(State):
             self.matchIndex[self.volatile['address']] = self.log.index
             self.nextIndex[self.volatile['address']] = self.log.index + 1
             index = statistics.median_low(self.matchIndex.values())
+
+            progress = 0
+            if index > self.log.commitIndex:
+                progress = 1
+
             self.log.commit(index)
+
+            # release write locks after commit
+            if self.log[index]['data']['key'] != 'cluster': # filter some other messages
+                if progress:
+                    for key in self.log[index]['data']['write_set']:
+                        self.locks[key].writer_release()
+
             self.send_client_append_response()
         else:
             self.nextIndex[peer] = max(0, self.nextIndex[peer] - 1)
+
+    def on_client_enqueue(self, protocol, msg):
+        # check compare set first
+        compare_set = msg['compare_set']
+        for key in compare_set: # first acquire read locks
+            if key not in self.locks:
+                self.locks[key] = RWLock()
+            self.locks[key].reader_acquire()
+
+        state_machine = self.log.state_machine
+        success = 1
+        for key, expected_value in compare_set: # check values
+            if state_machine[key] != expected_value:
+                success = 0
+                break
+        for key in compare_set: # release read locks
+            self.locks[key].reader_release()
+
+        # if compare set failed, notify user immediately
+        if not success:
+            protocol.send({'type': 'result', 'success': False})
+            return
+
+        # TODO: cache read to be returned on commit
+        # TODO: return immediately if no write set
+
+        # acquire write locks on write set
+        for key in msg['write_set'].keys():
+            if key not in self.locks:
+                self.locks[key] = RWLock()
+            self.locks[key].writer_acquire()
+
+        # write to self and then wait for send_append_entries() to come around
+        writes = {'action': 'put', 'write_set': msg['write_set'], 'key': 'wat'}
+        entry = {'term': self.persist['currentTerm'], 'data': writes}
+        self.log.append_entries([entry], self.log.index)
+
+        # prepare to respond to client
+        if self.log.index in self.waiting_clients:
+            self.waiting_clients[self.log.index].append(protocol)
+        else:
+            self.waiting_clients[self.log.index] = [protocol]
 
     def on_client_append(self, protocol, msg):
         """Append new entries to Leader log."""

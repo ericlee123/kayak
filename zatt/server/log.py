@@ -76,7 +76,9 @@ class DictStateMachine(collections.UserDict):
                 self.data[item['key']] = item['value']
             elif item['action'] == 'delete':
                 del self.data[item['key']]
-
+            elif item['action'] == 'put':
+                for key in item['write_set']:
+                    self.data[key] = item['write_set'][key]
 
 class LogManager:
     """Instantiate and manage the components of the "Log" subsystem.
@@ -133,7 +135,7 @@ class LogManager:
         # the state machine application could be asynchronous
         self.state_machine.apply(self, self.commitIndex)
         logger.debug('State machine: %s', self.state_machine.data)
-        self.compaction_timer_touch()
+        # self.compaction_timer_touch()
 
     def compact(self):
         del self.compaction_timer
