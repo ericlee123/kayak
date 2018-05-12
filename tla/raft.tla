@@ -162,7 +162,7 @@ Init == /\ messages = [m \in {} |-> 0]
         /\ InitCandidateVars
         /\ InitLeaderVars
         /\ InitLogVars
-        /\ prevLogLength = 0 /\ nextLogLength = 0 /\ termLeaderLog = [ i \in {1} |-> << >> ]
+        /\ prevLogLength = 0 /\ nextLogLength = 0 /\ termLeaderLog = [ i \in (0..20) |-> << >> ]
 
 ----
 \* Define state transitions
@@ -258,7 +258,7 @@ ClientRequest(i, v) ==
         /\ prevLogLength' = nextLogLength
         /\ nextLogLength' = Len(newLog)
     /\ UNCHANGED <<messages, serverVars, candidateVars,
-                   leaderVars, commitIndex>>
+                   leaderVars, commitIndex, termLeaderLog>>
 
 \* Leader i advances its commitIndex.
 \* This is done as a separate step from handling AppendEntries responses,
@@ -281,7 +281,9 @@ AdvanceCommitIndex(i) ==
               ELSE
                   commitIndex[i]
        IN commitIndex' = [commitIndex EXCEPT ![i] = newCommitIndex] /\
-          termLeaderLog' = [termLeaderLog EXCEPT ![currentTerm[i]] = Append(termLeaderLog[currentTerm[i]], log[i][newCommitIndex])]
+          IF newCommitIndex > 0
+          THEN termLeaderLog' = [termLeaderLog EXCEPT ![currentTerm[i]] = Append(termLeaderLog[currentTerm[i]], log[i][newCommitIndex])]
+          ELSE termLeaderLog' = termLeaderLog
     /\ UNCHANGED <<messages, serverVars, candidateVars, leaderVars, log, prevLogLength, nextLogLength>>
 
 ----
