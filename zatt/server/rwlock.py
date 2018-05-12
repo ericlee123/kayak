@@ -16,7 +16,7 @@ prevent write starvation.
     self.monitor = threading.Lock()
     self.readers_ok = threading.Condition(self.monitor)
     self.writers_ok = threading.Condition(self.monitor)
-  def acquire_read(self):
+  def shared_lock(self):
     """Acquire a read lock. Several threads can hold this typeof lock.
 It is exclusive with write locks."""
     self.monitor.acquire()
@@ -24,7 +24,7 @@ It is exclusive with write locks."""
       self.readers_ok.wait()
     self.rwlock += 1
     self.monitor.release()
-  def acquire_write(self):
+  def exclusive_lock(self):
     """Acquire a write lock. Only one thread can hold this lock, and
 only when no read locks are also held."""
     self.monitor.acquire()

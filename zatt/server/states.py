@@ -367,12 +367,12 @@ class Leader(State):
         for key in ordered_compares:
             if key not in self.modify_locks:
                 self.modify_locks[key] = RWLock()
-            self.modify_locks[key].acquire_write()
+            self.modify_locks[key].exclusive_lock()
 
             if key not in ordered_writes:
                 if key not in self.access_locks:
                     self.access_locks[key] = RWLock()
-                self.access_locks[key].acquire_read()
+                self.access_locks[key].shared_lock()
 
                 self.modify_locks[key].release()
 
@@ -382,11 +382,11 @@ class Leader(State):
             else:
                 if key not in self.access_locks:
                     self.access_locks[key] = RWLock()
-                self.access_locks[key].acquire_write()
+                self.access_locks[key].exclusive_lock()
 
                 if key not in self.modify_locks:
                     self.modify_locks[key] = RWLock()
-                self.modify_locks[key].acquire_read()
+                self.modify_locks[key].shared_lock()
 
                 self.access_locks[key].release()
 
@@ -423,7 +423,7 @@ class Leader(State):
         # write to self and then wait for send_append_entries() to come around
         writes = {'action': 'put', 'write_set': msg['write_set'], 'key': 'wat'}
         entry = {'term': self.persist['currentTerm'], 'data': writes}
-        self.log_lock.acquire_write()
+        self.log_lock.exclusive_lock()
         self.log.append_entries([entry], self.log.index)
         self.log_lock.release()
 
@@ -431,7 +431,7 @@ class Leader(State):
         self.release_locks(ordered_compares, ordered_writes)
 
         # prepare to respond to client
-        self.waiting_clients_lock.acquire_write()
+        self.waiting_clients_lock.exclusive_lock()
         if self.log.index in self.waiting_clients:
             self.waiting_clients[self.log.index].append(protocol)
         else:
@@ -455,7 +455,7 @@ class Leader(State):
     def send_client_append_response(self):
         """Respond to client upon commitment of log entries."""
         to_delete = []
-        self.waiting_clients_lock.acquire_write()
+        self.waiting_clients_lock.exclusive_lock()
         for client_index, clients in self.waiting_clients.items():
             if client_index <= self.log.commitIndex:
                 for client in clients:
