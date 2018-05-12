@@ -1,5 +1,5 @@
 import time
-import threading
+from multiprocessing import Process
 
 from zatt.client import mtdd
 
@@ -16,7 +16,7 @@ def client(id, port):
 	# determine beginning time
 	start_time = time.time()
 	# run mini transactions
-	for i in range(10):
+	for i in range(1000):
 		d.send_mt(mini_txn['compare'], mini_txn['write'], mini_txn['read'])
 	# determine ending time
 	end_time = time.time()
@@ -29,18 +29,22 @@ def stress_test():
 	d.send_mt({}, {'a': 1, 'b': 2}, [])
 
 	# create the threads
-	client_threads = list()
-	client_threads.append(threading.Thread(name='client0', target=client, args=(0, 5254)))
-	client_threads.append(threading.Thread(name='client1', target=client, args=(1, 5255)))
-	client_threads.append(threading.Thread(name='client2', target=client, args=(2, 5256)))
-	client_threads.append(threading.Thread(name='client3', target=client, args=(3, 5257)))
-	client_threads.append(threading.Thread(name='client4', target=client, args=(4, 5258)))
+	client_processes = list()
+	client_processes.append(Process(name='client0', target=client, args=(0, 5254)))
+	client_processes.append(Process(name='client1', target=client, args=(1, 5255)))
+	client_processes.append(Process(name='client2', target=client, args=(2, 5256)))
+	client_processes.append(Process(name='client3', target=client, args=(3, 5257)))
+	client_processes.append(Process(name='client4', target=client, args=(4, 5258)))
+
+	start_time = time.time()
 	# start the threads
-	for client_thread in client_threads:
-		client_thread.start()
+	for client_process in client_processes:
+		client_process.start()
 	# wait for the threads to finish
-	for client_thread in client_threads:
-		client_thread.join()
+	for client_process in client_processes:
+		client_process.join()
+	end_time = time.time()
+	print('whole thing took {}'.format(end_time - start_time))
 
 if __name__ == '__main__':
 	# this test assumes using ports 5254, 5255, 5256, 5257, and 5258 for the
