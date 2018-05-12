@@ -16,7 +16,7 @@ def client(id, port):
 	# determine beginning time
 	start_time = time.time()
 	# run mini transactions
-	for i in range(1000):
+	for i in range(100):
 		d.send_mt(mini_txn['compare'], mini_txn['write'], mini_txn['read'])
 	# determine ending time
 	end_time = time.time()

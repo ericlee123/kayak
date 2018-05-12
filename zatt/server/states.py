@@ -242,6 +242,7 @@ class Candidate(Follower):
         if self.votes_count > len(self.volatile['cluster']) / 2:
             self.orchestrator.change_state(Leader)
 
+import threading
 
 class Leader(State):
     """Leader state."""
@@ -255,8 +256,12 @@ class Leader(State):
         self.nextIndex = {p: self.log.commitIndex + 1 for p in self.matchIndex}
         self.waiting_clients = {}
         self.send_append_entries()
-        self.locks = {}
+
+        self.compare_shared_locks = {}
+        self.write_shared_locks = {}
         self.read_cache = {}
+        self.log_lock = RWLock()
+        self.waiting_clients_lock = RWLock()
 
         if 'cluster' not in self.log.state_machine:
             self.log.append_entries([
@@ -326,35 +331,77 @@ class Leader(State):
 
             self.log.commit(index)
 
-            # release write locks after commit
-            if self.log[index]['data']['key'] != 'cluster': # filter some other messages
-                if progress:
-                    for key in self.log[index]['data']['write_set']:
-                        self.locks[key].release()
+            # # release write locks after commit
+            # if self.log[index]['data']['key'] != 'cluster': # filter some other messages
+            #     if progress:
+            #         print(self.locks)
+            #         for key in self.log[index]['data']['write_set']:
+            #             if key not in self.locks:
+            #                 self.locks[key] = RWLock()
+            #             self.locks[key].release()
 
             self.send_client_append_response()
         else:
             self.nextIndex[peer] = max(0, self.nextIndex[peer] - 1)
 
     def on_client_enqueue(self, protocol, msg):
+        threading.Thread(target=self.parallel_enqueue, args=(protocol, msg)).start()
+
+    def parallel_enqueue(self, protocol, msg):
 
         compare_set = msg['compare_set']
         write_set = msg['write_set']
         read_set = msg['read_set'] # actually a list
 
-        # grab locks:
-        #   read  -> (C + R) / W
-        #   write -> W
-        read_locks = set(compare_set.keys()).union(read_set).difference(write_set.keys())
-        write_locks = write_set.keys()
-        for key in read_locks:
-            if key not in self.locks:
-                self.locks[key] = RWLock()
-            self.locks[key].acquire_read()
-        for key in write_locks:
-            if key not in self.locks:
-                self.locks[key] = RWLock()
-            self.locks[key].acquire_write()
+        # compares need exclusive locks from the write set and vice versa
+        ordered_compares = sorted(list(compare_set.keys()))
+        ordered_writes = sorted(list(write_set.keys()))
+        print("===== BEFORE GRABBING LOCKS")
+        for key in ordered_compares:
+            if key not in self.write_shared_locks:
+                self.write_shared_locks[key] = RWLock()
+            print("grabbing ww " + key)
+            self.write_shared_locks[key].acquire_write()
+            if key not in self.compare_shared_locks:
+                self.compare_shared_locks[key] = RWLock()
+            print("grabbing cr " + key)
+            self.compare_shared_locks[key].acquire_read()
+            print("releasing ww " + key)
+            self.write_shared_locks[key].release()
+        for key in ordered_writes:
+            if key not in self.compare_shared_locks:
+                self.compare_shared_locks[key] = RWLock()
+            print("grabbing cw " + key)
+            if key in ordered_compares:
+                self.compare_shared_locks[key].acquire_read()
+            else:
+                print("should not see this")
+                self.compare_shared_locks[key].acquire_write()
+            if key not in self.write_shared_locks:
+                self.write_shared_locks[key] = RWLock()
+            print("grabbing wr " + key)
+            self.write_shared_locks[key].acquire_read()
+            print("releasing cw " + key)
+            if key not in ordered_compares:
+                self.compare_shared_locks[key].release()
+
+        print("===== GRABBED ALL LOCKS")
+        # # grab locks:
+        # #   read  -> (C + R) / W
+        # #   write -> W
+        # # TODO: NEED TO SORT
+        # read_locks = set(compare_set.keys()).union(read_set).difference(write_set.keys())
+        # write_locks = write_set.keys()
+        # for key in read_locks:
+        #     if key not in self.locks:
+        #         print("making lock " + key)
+        #         self.locks[key] = RWLock()
+        #     self.locks[key].acquire_read()
+        # for key in write_locks:
+        #     if key not in self.locks:
+        #         print("making lock " + key)
+        #         self.locks[key] = RWLock()
+        #     self.locks[key].acquire_write()
 
         # check compare set before proceeding with transaction
         success = 1
@@ -365,22 +412,45 @@ class Leader(State):
 
         # if compare set failed, notify user immediately
         if not success:
-            for key in zip(read_locks, write_locks):
-                self.locks[key].release()
+            # for key in reversed(ordered_compares):
+            #     self.compare_shared_locks[key].release()
+            #     # self.write_shared_locks[key].release()
+            # for key in reversed(ordered_writes):
+            #     if key not in ordered_writes:
+            #         self.compare_shared_locks[key].release()
+            #     # self.write_shared_locks[key].release()
             protocol.send({'type': 'result', 'success': False, 'reads': {}})
             return
+
+        # for key in ordered_writes:
+        #     if key not in self.compare_shared_locks:
+        #         self.compare_shared_locks[key] = RWLock()
+        #     print("grabbing cw " + key)
+        #     if key in ordered_compares:
+        #         self.compare_shared_locks[key].promote()
+        #     else:
+        #         self.compare_shared_locks[key].acquire_write()
+        #     if key not in self.write_shared_locks:
+        #         self.write_shared_locks[key] = RWLock()
+        #     print("grabbing wr " + key)
+        #     self.write_shared_locks[key].acquire_read()
+        #     print("releasing cw " + key)
+        #     self.compare_shared_locks[key].release()
 
         # cache read to be returned on commit
         reads = {}
         for key in read_set:
             reads[key] = self.log.state_machine[key]
 
-        # release read locks
-        for key in read_locks:
-            self.locks[key].release()
-
         #  return immediately if no write set
         if len(write_set) == 0:
+            # for key in reversed(ordered_writes):
+            #     self.write_shared_locks[key].release()
+            #     # self.compare_shared_locks[key].release()
+            # for key in reversed(ordered_compares):
+            #     if key not in ordered_writes:
+            #         self.compare_shared_locks[key].release()
+            #     # self.write_shared_locks[key].release()
             protocol.send({'type': 'result', 'success': True, 'reads': reads})
             return
 
@@ -389,13 +459,39 @@ class Leader(State):
         # write to self and then wait for send_append_entries() to come around
         writes = {'action': 'put', 'write_set': msg['write_set'], 'key': 'wat'}
         entry = {'term': self.persist['currentTerm'], 'data': writes}
+        self.log_lock.acquire_write()
         self.log.append_entries([entry], self.log.index)
+        self.log_lock.release()
+
+        # release all locks
+        print("+++++ RELEASING LOCKS")
+        for key in reversed(ordered_writes):
+            print("releasing w " + key)
+            if key not in ordered_compares:
+                self.write_shared_locks[key].release()
+            else:
+                self.write_shared_locks[key].release()
+                self.compare_shared_locks[key].release()
+        for key in reversed(ordered_compares):
+            self.compare_shared_locks[key].release()
+            # if key not in ordered_writes:
+            #     print("releasing c " + key)
+            # else:
+            #     self.
+            # print("releasing c " + key)
+            # self.compare_shared_locks[key].release()
+
+            # self.write_shared_locks[key].release()
+
+        print("+++++ RELEASED LOCKS")
 
         # prepare to respond to client
+        self.waiting_clients_lock.acquire_write()
         if self.log.index in self.waiting_clients:
             self.waiting_clients[self.log.index].append(protocol)
         else:
             self.waiting_clients[self.log.index] = [protocol]
+        self.waiting_clients_lock.release()
 
     def on_client_append(self, protocol, msg):
         """Append new entries to Leader log."""
@@ -414,6 +510,7 @@ class Leader(State):
     def send_client_append_response(self):
         """Respond to client upon commitment of log entries."""
         to_delete = []
+        self.waiting_clients_lock.acquire_write()
         for client_index, clients in self.waiting_clients.items():
             if client_index <= self.log.commitIndex:
                 for client in clients:
@@ -423,6 +520,7 @@ class Leader(State):
                 to_delete.append(client_index)
         for index in to_delete:
             del self.waiting_clients[index]
+        self.waiting_clients_lock.release()
 
     def on_client_config(self, protocol, msg):
         """Push new cluster config. When uncommitted cluster changes
