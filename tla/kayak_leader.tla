@@ -54,18 +54,20 @@ Min(s) == CHOOSE x \in s : \A y \in s : x <= y
 \* Return the maximum value from a set, or undefined if the set is empty.
 Max(s) == CHOOSE x \in s : \A y \in s : x >= y    
 
-InidicesWithKey(curLog, key) == { i \in (1..Len(curLog)) : key \in curLog[i] }
+InidicesWithKey(curLog, key) == { i \in (1..Len(curLog)) : key \in DOMAIN curLog[i] }
 
 Compare(curLog, key, value) ==
     IF Len(log) > 0 /\ curLog[Max(InidicesWithKey(curLog, key))][key] = value
     THEN TRUE
     ELSE FALSE
 
+\*Truncate(curLog, length) ==
+
 ----
 \* Define initial values for all variables
 
 Init == /\ allLogs      = {}
-        /\ log          = << >>
+        /\ log          = <<[ i \in Key |-> 0 ]>>
         /\ commitIndex  = 0
         /\ concurrentMT = {}
         /\ access_locks = [k \in Key |-> 0]
@@ -76,15 +78,10 @@ Init == /\ allLogs      = {}
 
 \* On restart, all locks and everything are reset; log is truncated to last committed index
 Restart(z) ==
-    /\ IF Len(log) > 0
-       THEN LET resetLog == [ i \in (1..commitIndex) |-> log[i] ]
-                integral == [ i \in (1..commitIndex) |-> Append(log[i-1], log[i]) ]
-            IN  log' = integral[commitIndex]
-       ELSE UNCHANGED <<log>>
     /\ access_locks' = [k \in Key |-> 0]
     /\ modify_locks' = [k \in Key |-> 0]
     /\ concurrentMT' = {}
-    /\ UNCHANGED <<commitIndex>>
+    /\ UNCHANGED <<commitIndex, log>> \* TODO: need to reset log
 
 \* Leader receives minitransaction request from client
 ReceiveMinitransaction(cs, ws, rs) ==
@@ -102,10 +99,9 @@ ProcessMinitransaction(mt) ==
     /\ LET cs == mt[1]
            ws == mt[2]
            rs == mt[3]
-       IN IF \A k \in DOMAIN cs : Compare(log, k, cs[k])
-          THEN log' = Append(log, ws) ELSE UNCHANGED <<log>>
-       /\ access_locks' = [ k \in DOMAIN access_locks |-> IF k \in DOMAIN cs THEN access_locks[k] - 1 ELSE access_locks[k] ]
-       /\ modify_locks' = [ k \in DOMAIN modify_locks |-> IF k \in DOMAIN ws THEN modify_locks[k] - 1 ELSE modify_locks[k] ]
+       IN IF \A k \in DOMAIN cs : Compare(log, k, cs[k]) THEN log' = Append(log, ws) ELSE UNCHANGED <<log>>
+    /\ access_locks' = [ k \in DOMAIN access_locks |-> IF k \in DOMAIN mt[1] THEN access_locks[k] - 1 ELSE access_locks[k] ]
+    /\ modify_locks' = [ k \in DOMAIN modify_locks |-> IF k \in DOMAIN mt[2] THEN modify_locks[k] - 1 ELSE modify_locks[k] ]
     /\ concurrentMT' = concurrentMT \ {mt}
     /\ UNCHANGED <<commitIndex>>
 
