@@ -5,6 +5,7 @@ import asyncio
 import logging
 from .config import config
 from zatt.server import utils
+from .rwlock import RWLock
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class Log(collections.UserList):
         if os.path.isfile(self.path):
             os.remove(self.path)
         self.data = new_data
-        utils.msgpack_appendable_pack(self.data, self.path)
+        # utils.msgpack_appendable_pack(self.data, self.path)
 
 
 class Compactor():
@@ -93,6 +94,8 @@ class LogManager:
         self.commitIndex = self.compacted.index + len(self.log)
         self.state_machine.apply(self, self.commitIndex)
 
+        self.replace_lock = RWLock()
+
     def __getitem__(self, index):
         """Get item or slice from the log, based on absolute log indexes.
         Item(s) already compacted cannot be requested."""
@@ -135,7 +138,7 @@ class LogManager:
         # the state machine application could be asynchronous
         self.state_machine.apply(self, self.commitIndex)
         logger.debug('State machine: %s', self.state_machine.data)
-        # self.compaction_timer_touch()
+        self.compaction_timer_touch()
 
     def compact(self):
         del self.compaction_timer
