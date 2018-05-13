@@ -87,7 +87,8 @@ Restart(z) ==
 ReceiveMinitransaction(cs, ws, rs) ==
     /\ \A k \in DOMAIN cs : modify_locks[k] = 0
     /\ \A k \in DOMAIN ws : access_locks[k] = 0
-    /\ access_locks' = [ k \in DOMAIN access_locks |-> IF k \in DOMAIN cs THEN access_locks[k] + 1 ELSE access_locks[k] ]
+    /\ \A k \in rs        : access_locks[k] = 0
+    /\ access_locks' = [ k \in DOMAIN access_locks |-> IF k \in (DOMAIN cs \union rs) \ DOMAIN ws THEN access_locks[k] + 1 ELSE access_locks[k] ]
     /\ modify_locks' = [ k \in DOMAIN modify_locks |-> IF k \in DOMAIN ws THEN modify_locks[k] + 1 ELSE modify_locks[k] ]
     /\ LET wat == <<cs>>
            huh == Append(wat, ws)
@@ -100,14 +101,18 @@ ProcessMinitransaction(mt) ==
            ws == mt[2]
            rs == mt[3]
        IN IF \A k \in DOMAIN cs : Compare(log, k, cs[k]) THEN log' = Append(log, ws) ELSE UNCHANGED <<log>>
-    /\ access_locks' = [ k \in DOMAIN access_locks |-> IF k \in DOMAIN mt[1] THEN access_locks[k] - 1 ELSE access_locks[k] ]
-    /\ modify_locks' = [ k \in DOMAIN modify_locks |-> IF k \in DOMAIN mt[2] THEN modify_locks[k] - 1 ELSE modify_locks[k] ]
+    /\ access_locks' = [ k \in DOMAIN access_locks |-> IF k \in (DOMAIN mt[1] \union mt[3]) \ DOMAIN mt[2] THEN access_locks[k] - 1 ELSE access_locks[k] ]
+\*    /\ modify_locks' = [ k \in DOMAIN modify_locks |-> IF k \in DOMAIN mt[2] THEN modify_locks[k] - 1 ELSE modify_locks[k] ]
     /\ concurrentMT' = concurrentMT \ {mt}
-    /\ UNCHANGED <<commitIndex>>
+    /\ UNCHANGED <<commitIndex, modify_locks>>
 
 AdvanceCommitIndex(z) ==
-    /\ commitIndex' = Min({commitIndex + 1, Len(log) - 1})
-    /\ UNCHANGED <<log, concurrentMT, access_locks, modify_locks>>
+    /\ LET newCommitIndex == Min({commitIndex + 1, Len(log) - 1})
+       IN commitIndex' = newCommitIndex
+       /\ modify_locks' = IF newCommitIndex > 0
+                          THEN [ k \in DOMAIN modify_locks |-> IF k \in DOMAIN log[newCommitIndex] THEN modify_locks[k] - 1 ELSE modify_locks[k] ]
+                          ELSE modify_locks
+    /\ UNCHANGED <<log, concurrentMT, access_locks>>
 
 ----
 \* Defines how the variables may transition.
