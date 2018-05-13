@@ -331,14 +331,11 @@ class Leader(State):
 
             self.log.commit(index)
 
-            # # release write locks after commit
-            # if self.log[index]['data']['key'] != 'cluster': # filter some other messages
-            #     if progress:
-            #         print(self.locks)
-            #         for key in self.log[index]['data']['write_set']:
-            #             if key not in self.locks:
-            #                 self.locks[key] = RWLock()
-            #             self.locks[key].release()
+            # release write locks after commit
+            if self.log[index]['data']['key'] != 'cluster': # filter some other messages
+                if progress:
+                    for key in self.log[index]['data']['write_set']:
+                        self.modify_locks[key].release()
 
             self.send_client_append_response()
         else:
@@ -361,10 +358,10 @@ class Leader(State):
         read_set = msg['read_set'] # actually a list
 
         # compares need exclusive locks from the write set and vice versa
-        ordered_compares = sorted(list(compare_set.keys()))
+        ordered_access = sorted(set(zip(list(compare_set.keys()), read_set))) # also need read locks for read set
         ordered_writes = sorted(list(write_set.keys()))
 
-        for key in ordered_compares:
+        for key in ordered_access:
             if key not in self.modify_locks:
                 self.modify_locks[key] = RWLock()
             self.modify_locks[key].exclusive_lock()
@@ -377,7 +374,7 @@ class Leader(State):
                 self.modify_locks[key].release()
 
         for key in ordered_writes:
-            if key in ordered_compares: # if you already have an exclusive lock to modify, then just demote
+            if key in ordered_access: # if you already have an exclusive lock to modify, then just demote
                 self.modify_locks[key].demote()
             else:
                 if key not in self.access_locks:
@@ -390,9 +387,6 @@ class Leader(State):
 
                 self.access_locks[key].release()
 
-
-        # TODO: also grab lcoks for reads, probably compare_shared_locks.acquire_read
-
         # check compare set before proceeding with transaction
         # TODO: MAKE SURE THE STATE_MACHINE DOESN'T CHANGE DURING THE CHECK
         success = 1
@@ -403,7 +397,7 @@ class Leader(State):
 
         # if compare set failed, notify user immediately
         if not success:
-            self.release_locks(ordered_compares, ordered_writes)
+            self.release_locks(ordered_access, ordered_writes)
             protocol.send({'type': 'result', 'success': False, 'reads': {}})
             return
 
@@ -414,7 +408,7 @@ class Leader(State):
 
         #  return immediately if no write set
         if len(write_set) == 0:
-            self.release_locks(ordered_compares, ordered_writes)
+            self.release_locks(ordered_access, ordered_writes)
             protocol.send({'type': 'result', 'success': True, 'reads': reads})
             return
 
@@ -428,7 +422,7 @@ class Leader(State):
         self.log_lock.release()
 
         # release all locks
-        self.release_locks(ordered_compares, ordered_writes)
+        self.release_locks(ordered_access, list())
 
         # prepare to respond to client
         self.waiting_clients_lock.exclusive_lock()
