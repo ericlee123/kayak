@@ -13,7 +13,7 @@ def stress_test():
 	for i in range(50):
 		write_compare_set[i] = i
 		read_set.append(i)
-	
+
 	# initialize the key-value store
 	d.send_mt({}, write_compare_set, [])
 
@@ -22,7 +22,7 @@ def stress_test():
 		'write': write_compare_set,
 		'read': read_set
 	}
-	num_iterations = 100
+	num_iterations = 60
 
 	client_processes = init_client_processes(mini_txn, num_iterations)
 

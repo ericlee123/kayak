@@ -1,4 +1,6 @@
 from multiprocessing import Process
+from zatt.client import mtdd
+import time
 
 # spawns 5 client threads with the pre-specified ports which will run the
 # minitransaction that is passed in for the number of times specified by the
@@ -6,11 +8,11 @@ from multiprocessing import Process
 def init_client_processes(mini_txn, num_iterations):
 	# create the threads
 	client_processes = list()
-	client_processes.append(Process(name='client0', target=client, args=(0, 5254)))
-	client_processes.append(Process(name='client1', target=client, args=(1, 5255)))
-	client_processes.append(Process(name='client2', target=client, args=(2, 5256)))
-	client_processes.append(Process(name='client3', target=client, args=(3, 5257)))
-	client_processes.append(Process(name='client4', target=client, args=(4, 5258)))
+	client_processes.append(Process(name='client0', target=client, args=(0, 5254, mini_txn, num_iterations)))
+	client_processes.append(Process(name='client1', target=client, args=(1, 5255, mini_txn, num_iterations)))
+	client_processes.append(Process(name='client2', target=client, args=(2, 5256, mini_txn, num_iterations)))
+	client_processes.append(Process(name='client3', target=client, args=(3, 5257, mini_txn, num_iterations)))
+	client_processes.append(Process(name='client4', target=client, args=(4, 5258, mini_txn, num_iterations)))
 	return client_processes
 
 def client(client_id, port, mini_txn, num_iterations):
