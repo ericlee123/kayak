@@ -17,7 +17,7 @@ def stress_test():
 		'read': []
 	}
 	num_iterations = 100
-	client_processes = init_client_processes(mini_txn, 100)
+	client_processes = init_client_processes(mini_txn, num_iterations)
 
 	start_time = time.time()
 	# start the threads

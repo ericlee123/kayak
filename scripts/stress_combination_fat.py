@@ -25,7 +25,7 @@ def stress_test(set_size=50, num_iterations=50, should_print=True, should_spin_d
 		'read': read_set
 	}
 
-	client_processes = init_client_processes(mini_txn, num_iterations)
+	client_processes = init_client_processes(mini_txn, num_iterations, should_print=should_print)
 
 	start_time = time.time()
 	# start the threads
